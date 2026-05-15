@@ -9,6 +9,15 @@ through the same persistence layer as the CLI.
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Streamlit runs this file as a script, so the project root is not on
+# sys.path by default. Add it so `from src import ...` works.
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 import streamlit as st
 
 from src import expertflyer_input

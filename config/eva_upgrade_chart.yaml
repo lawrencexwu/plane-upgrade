@@ -1,0 +1,52 @@
+routes:
+  TPE-ORD:
+    region_group: "Taiwan to Chicago/New York/Houston/Dallas/Washington/Toronto"
+    upgrade_to_business:
+      economy_standard:
+        cabin: "Economy"
+        fare_family: "Standard"
+        fare_classes: ["Q", "H", "M"]
+        miles: 70000
+      economy_up:
+        cabin: "Economy"
+        fare_family: "Up"
+        fare_classes: ["B", "Y"]
+        miles: 58500
+      premium_economy_standard:
+        cabin: "Premium Economy"
+        fare_family: "Standard"
+        fare_classes: ["L", "T"]
+        miles: 40000
+      premium_economy_up:
+        cabin: "Premium Economy"
+        fare_family: "Up"
+        fare_classes: ["K"]
+        miles: 36000
+      non_upgradeable:
+        fare_classes: ["A", "V", "W", "S", "P"]
+
+  LAX-TPE:
+    region_group: "Asia to America excluding higher-mileage North America cities"
+    upgrade_to_business:
+      economy_standard:
+        cabin: "Economy"
+        fare_family: "Standard"
+        fare_classes: ["Q", "H", "M"]
+        miles: 60000
+      economy_up:
+        cabin: "Economy"
+        fare_family: "Up"
+        fare_classes: ["B", "Y"]
+        miles: 50000
+      premium_economy_standard:
+        cabin: "Premium Economy"
+        fare_family: "Standard"
+        fare_classes: ["L", "T"]
+        miles: 35000
+      premium_economy_up:
+        cabin: "Premium Economy"
+        fare_family: "Up"
+        fare_classes: ["K"]
+        miles: 31500
+      non_upgradeable:
+        fare_classes: ["A", "V", "W", "S", "P"]

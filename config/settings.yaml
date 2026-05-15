@@ -1,0 +1,12 @@
+default_passengers: 2
+default_currency: "TWD"
+eva_mile_value:
+  TWD: 0.8
+  USD: 0.025
+confidence_rules:
+  official_confirmed: "High"
+  official_waitlist: "Medium"
+  expertflyer_strong_clue: "Medium"
+  expertflyer_weak_clue: "Low"
+  seatmap_only: "Low"
+  non_upgradeable_fare: "Do Not Buy"

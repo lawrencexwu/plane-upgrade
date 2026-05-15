@@ -141,9 +141,26 @@ reports/                        Markdown reports
 tests/                          pytest tests
 ```
 
-## Future (not built yet)
+## Streamlit dashboard
 
-A Streamlit dashboard could later wrap the same `src/` modules to provide
-sliders for mile valuation, a side-by-side comparison view, and ExpertFlyer
-log browsing. It is intentionally **not** implemented in v1 — the CLI works
-first.
+A read-only UI on top of the same `src/` modules. No scraping, no login,
+no credentials stored.
+
+```bash
+pip install -r requirements.txt
+streamlit run src/dashboard.py
+```
+
+The dashboard lets you:
+
+- Pick a route pair (TPE-ORD + LAX-TPE, or either leg alone)
+- Enter passengers, currency, mile valuation, and Economy/PE prices
+- Pick Standard or Up for each family
+- See the recommendation, miles required, miles saved, cash upcharge,
+  implied cost per saved mile, and confidence level
+- Enter a manual ExpertFlyer observation and save it through the same
+  JSON+CSV persistence layer as the CLI
+- See the latest ExpertFlyer notes for the trip
+- Download a Markdown report or save it to `reports/`
+
+The dashboard never claims an upgrade is confirmed based on ExpertFlyer.

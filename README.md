@@ -3,164 +3,109 @@
 Local Python tool to compare EVA Air Economy vs Premium Economy when the goal
 is to use **Infinity MileageLands** miles to upgrade to Business / Royal Laurel.
 
-The tool constantly answers:
+It constantly answers:
 
 > "How much extra cash am I paying to save EVA miles by buying Premium Economy
 > instead of Economy, and is that a good deal?"
 
-## Constraints (read before using)
+## Constraints (deliberate guardrails — read this)
 
-- This tool **does not buy tickets** and never will.
-- No login automation, no captcha bypass, no rate-limit evasion.
-- ExpertFlyer is treated as a **third-party clue** only — never as official
-  EVA upgrade confirmation. Manual entry only in v1.
-- Seat map availability is **not** the same as mileage upgrade availability.
-- Paid Business inventory is **not** the same as mileage upgrade inventory.
+- **Does not buy tickets.** Ever.
+- **No login automation, no scraping, no captcha/rate-limit/paywall bypass.**
+  EVA fare prices and ExpertFlyer data are *not* fetched automatically — there
+  is no compliant way to do that, and a logged-in scraper risks getting your
+  EVA / ExpertFlyer accounts banned. Instead you **paste** text you already see
+  in your own browser and the tool parses it.
+- **No credentials stored.**
+- **ExpertFlyer is a third-party clue only** — never official EVA upgrade
+  confirmation. Seat-map availability ≠ mileage upgrade availability. Paid
+  Business inventory ≠ mileage upgrade inventory.
+- **No guessed mileage.** Only region pairs marked `verified: true` in
+  `config/eva_upgrade_chart.yaml` return a number. Anything else reports
+  "chart not verified — confirm with EVA" instead of inventing a value.
 
-## Install
+## Install & test
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-## Run tests
-
-```bash
 pytest
 ```
 
-## CLI
-
-All commands are run as `python -m src.cli <command>`.
-
-### 1. Compare Economy Standard vs Premium Economy Standard
+## Dashboard (recommended)
 
 ```bash
-python -m src.cli compare \
-  --routes TPE-ORD LAX-TPE \
-  --passengers 2 \
-  --economy-price 55000 \
-  --premium-economy-price 80000 \
-  --currency TWD \
-  --economy-family standard \
-  --premium-family standard \
-  --mile-value 0.8
-```
-
-Prices are interpreted as **total booking cost** (all passengers, all legs)
-in the same currency as `--mile-value`.
-
-### 2. Compare Up fares
-
-```bash
-python -m src.cli compare \
-  --routes TPE-ORD LAX-TPE \
-  --passengers 2 \
-  --economy-price 70000 \
-  --premium-economy-price 95000 \
-  --currency TWD \
-  --economy-family up \
-  --premium-family up \
-  --mile-value 0.8
-```
-
-### 3. Check fare class eligibility
-
-```bash
-python -m src.cli eligibility --route TPE-ORD --fare-class L
-```
-
-### 4. Add manual ExpertFlyer check
-
-```bash
-python -m src.cli add-expertflyer-check \
-  --route LAX-TPE \
-  --date 2026-06-23 \
-  --airline BR \
-  --flight-number BR15 \
-  --aircraft "Boeing 777-300ER" \
-  --departure "00:50" \
-  --arrival "05:20+1" \
-  --business-seatmap-notes "Several unassigned Royal Laurel seats visible" \
-  --premium-seatmap-notes "Premium Economy has multiple unassigned seats" \
-  --fare-bucket-notes "Manual ExpertFlyer fare-bucket notes entered by user" \
-  --confidence-clue strong \
-  --screenshot-path "data/screenshots/br15_expertflyer.png" \
-  --notes "Seat map only. Not official EVA upgrade inventory."
-```
-
-### 5. Generate report
-
-```bash
-python -m src.cli report \
-  --routes TPE-ORD LAX-TPE \
-  --passengers 2 \
-  --economy-price 55000 \
-  --premium-economy-price 80000 \
-  --currency TWD \
-  --economy-family standard \
-  --premium-family standard \
-  --mile-value 0.8 \
-  --include-latest-expertflyer
-```
-
-Add `--fare-class L` to drive confidence scoring, and any of
-`--official-confirmed`, `--official-waitlist`, `--seatmap-only` for manual
-inputs.
-
-## EVA upgrade chart (v1)
-
-| Route   | Fare family             | Fare classes | Miles to Business |
-|---------|-------------------------|--------------|------------------:|
-| TPE-ORD | Economy Standard        | Q / H / M    | 70,000            |
-| TPE-ORD | Economy Up              | B / Y        | 58,500            |
-| TPE-ORD | Premium Economy Standard| L / T        | 40,000            |
-| TPE-ORD | Premium Economy Up      | K            | 36,000            |
-| LAX-TPE | Economy Standard        | Q / H / M    | 60,000            |
-| LAX-TPE | Economy Up              | B / Y        | 50,000            |
-| LAX-TPE | Premium Economy Standard| L / T        | 35,000            |
-| LAX-TPE | Premium Economy Up      | K            | 31,500            |
-
-**Non-upgradeable:** Economy Discount/Basic A/V/W/S; Premium Economy Basic P.
-
-## Folder layout
-
-```
-config/eva_upgrade_chart.yaml   upgrade chart by route + bucket
-config/settings.yaml            defaults, mile valuations, confidence rules
-src/upgrade_rules.py            eligibility + miles lookup
-src/fare_compare.py             cash-vs-miles comparison
-src/confidence.py               confidence scoring
-src/expertflyer_input.py        manual ExpertFlyer persistence
-src/report_generator.py         Markdown report
-src/cli.py                      argparse CLI
-data/                           fare_checks.csv, expertflyer_checks.csv, checks/
-reports/                        Markdown reports
-tests/                          pytest tests
-```
-
-## Streamlit dashboard
-
-A read-only UI on top of the same `src/` modules. No scraping, no login,
-no credentials stored.
-
-```bash
-pip install -r requirements.txt
 streamlit run src/dashboard.py
 ```
 
-The dashboard lets you:
+Workflow:
 
-- Pick a route pair (TPE-ORD + LAX-TPE, or either leg alone)
-- Enter passengers, currency, mile valuation, and Economy/PE prices
-- Pick Standard or Up for each family
-- See the recommendation, miles required, miles saved, cash upcharge,
-  implied cost per saved mile, and confidence level
-- Enter a manual ExpertFlyer observation and save it through the same
-  JSON+CSV persistence layer as the CLI
-- See the latest ExpertFlyer notes for the trip
-- Download a Markdown report or save it to `reports/`
+1. Sidebar: pick **One-way / Round-trip / Multi-city**, type the airport
+   codes, passengers, currency, your mile value.
+2. **Paste** the Economy quote and the Premium Economy quote you see on the
+   EVA site into the two boxes. The tool extracts price, fare class, cabin and
+   family. Parsed values are pre-filled so you only correct what's wrong.
+3. Optionally **paste** ExpertFlyer text — it's parsed into a confidence clue
+   (never treated as official).
+4. Read the headline: **VERDICT + cash upcharge + miles saved + cost/saved
+   mile** vs your mile value, plus per-leg mileage, eligibility and confidence.
+5. Download or save the Markdown report.
 
-The dashboard never claims an upgrade is confirmed based on ExpertFlyer.
+## Universal upgrade chart
+
+`config/eva_upgrade_chart.yaml` is region-based: `airport → region`, then
+`region-pair → upgrade miles` by cabin/family. Verified today:
+
+| Region pair          | Eco Std | Eco Up | PE Std | PE Up |
+|----------------------|--------:|-------:|-------:|------:|
+| TW ↔ NA_HIGH (TPE-ORD…) | 70,000 | 58,500 | 40,000 | 36,000 |
+| TW ↔ NA_LOW (LAX-TPE…)  | 60,000 | 50,000 | 35,000 | 31,500 |
+
+To extend: add the airport under `airports`, add the confirmed region pair
+under `upgrade_award` with `verified: true`. It works immediately and the
+"cannot give a verdict" block clears for that route.
+
+Non-upgradeable everywhere: Economy A/V/W/S, Premium Economy P.
+
+## CLI
+
+```bash
+# Decision for your open-jaw trip
+python -m src.cli compare --legs TPE-ORD LAX-TPE --passengers 2 \
+  --economy-price 110000 --premium-economy-price 160000 \
+  --currency TWD --mile-value 0.8
+
+# Fare class eligibility
+python -m src.cli eligibility --fare-class L --leg TPE-ORD
+
+# Parse a pasted quote / ExpertFlyer block
+python -m src.cli parse-fare --text "EVA BR55 TPE-ORD Premium Economy (L) Standard TWD 80,000"
+python -m src.cli parse-expertflyer --stdin < ef.txt
+
+# Full Markdown report
+python -m src.cli report --legs TPE-ORD LAX-TPE --passengers 2 \
+  --economy-price 110000 --premium-economy-price 160000 \
+  --currency TWD --mile-value 0.8 \
+  --fare-class L --include-latest-expertflyer
+```
+
+`--legs`: 1 pair = one-way, 2 = round-trip, 3+ = multi-city. Prices are the
+**total booking cost** (all passengers, all legs).
+
+## Layout
+
+```
+config/eva_upgrade_chart.yaml  region-based chart (verified flags)
+config/settings.yaml           defaults, mile valuations
+src/upgrade_rules.py           airport→region→miles, fare-class classify
+src/trip.py                    one-way / round-trip / multi-city model
+src/parsers.py                 paste-and-parse (fare quote, ExpertFlyer)
+src/fare_compare.py            verdict + cash-vs-miles math
+src/confidence.py              confidence scoring
+src/expertflyer_input.py       manual ExpertFlyer JSON+CSV history
+src/report_generator.py        Markdown report
+src/cli.py                     argparse CLI
+src/dashboard.py               Streamlit UI
+tests/                         pytest (37 tests)
+```

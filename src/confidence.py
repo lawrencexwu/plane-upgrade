@@ -1,13 +1,14 @@
 """Upgrade confidence scoring.
 
-Never treat ExpertFlyer or seat map data as official EVA upgrade confirmation.
+ExpertFlyer / seat-map data can never produce High and is always labeled
+"NOT official EVA upgrade confirmation".
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
 
-from .upgrade_rules import FareEligibility
+from .upgrade_rules import FareClassInfo
 
 
 @dataclass
@@ -18,64 +19,50 @@ class ConfidenceAssessment:
 
 
 def assess(
-    eligibility: FareEligibility,
+    fare: FareClassInfo,
     official_confirmed: bool = False,
     official_waitlist: bool = False,
-    expertflyer_clue: Optional[str] = None,  # "strong" | "weak" | None
+    expertflyer_clue: Optional[str] = None,  # strong|weak|seatmap_only|None
     seatmap_only: bool = False,
 ) -> ConfidenceAssessment:
-    """Score upgrade confidence. Manual official-EVA confirmation takes priority."""
-    if not eligibility.upgradeable:
+    if not fare.upgradeable:
         return ConfidenceAssessment(
             "Do Not Buy",
-            f"Fare class {eligibility.fare_class} is NON-UPGRADEABLE. "
+            f"Fare class {fare.fare_class} is NON-UPGRADEABLE. "
             "DO NOT BUY FOR UPGRADE.",
-            is_official=False,
+            False,
         )
-
     if official_confirmed:
         return ConfidenceAssessment(
-            "High",
-            "Official EVA upgrade availability confirmed (manually entered).",
-            is_official=True,
-        )
-
+            "High", "Official EVA upgrade confirmation (manually entered).",
+            True)
     if official_waitlist:
         return ConfidenceAssessment(
             "Medium",
             "Official EVA waitlist confirmed. Not guaranteed to clear.",
-            is_official=True,
-        )
+            True)
 
     clue = (expertflyer_clue or "").strip().lower()
     if clue == "strong":
         return ConfidenceAssessment(
             "Medium",
-            "ExpertFlyer shows strong supporting clues (cabin not full, "
-            "relevant fare inventory open, seat map has many unassigned "
-            "Business seats). Medium confidence only — NOT official EVA "
-            "upgrade confirmation.",
-            is_official=False,
-        )
+            "ExpertFlyer shows strong supporting clues. Medium confidence "
+            "only - NOT official EVA upgrade confirmation.",
+            False)
     if clue == "weak":
         return ConfidenceAssessment(
             "Low",
-            "ExpertFlyer shows weak clues only. NOT official EVA upgrade "
-            "confirmation.",
-            is_official=False,
-        )
-
-    if seatmap_only:
+            "ExpertFlyer shows weak clues only. NOT official EVA "
+            "upgrade confirmation.",
+            False)
+    if clue == "seatmap_only" or seatmap_only:
         return ConfidenceAssessment(
             "Low",
-            "Seat map looks open, but seat map availability is not the same "
-            "as mileage upgrade availability.",
-            is_official=False,
-        )
-
+            "Seat map only. Seat-map availability is not the same as "
+            "mileage upgrade availability.",
+            False)
     return ConfidenceAssessment(
         "Low",
         "Fare class is upgradeable but upgrade availability is unknown. "
-        "Verify with EVA before relying on the upgrade clearing.",
-        is_official=False,
-    )
+        "Verify with EVA.",
+        False)

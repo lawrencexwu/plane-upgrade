@@ -1,19 +1,15 @@
-"""Streamlit dashboard for the EVA Air fare/upgrade decision tool.
+"""Streamlit dashboard: paste-and-parse, universal trip, glanceable verdict.
 
-Run:
     streamlit run src/dashboard.py
 
-This is a thin UI on top of the existing modules in src/. It does not scrape,
-log in, or store credentials. ExpertFlyer data is entered manually and saved
-through the same persistence layer as the CLI.
+No fetching, no login, no credentials. You paste text you already see in your
+own browser; the tool parses and decides.
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-# Streamlit runs this file as a script, so the project root is not on
-# sys.path by default. Add it so `from src import ...` works.
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -24,348 +20,213 @@ from src import expertflyer_input
 from src.confidence import assess
 from src.fare_compare import ComparisonInput, compare
 from src.models import ExpertFlyerCheck
+from src.parsers import parse_expertflyer, parse_fare_quote
 from src.report_generator import build_report, save_report
-from src.upgrade_rules import (
-    check_eligibility,
-    load_chart,
-    load_settings,
-    miles_for_bucket,
-)
-
-ROUTE_PAIRS = {
-    "TPE-ORD + LAX-TPE (open-jaw target trip)": ["TPE-ORD", "LAX-TPE"],
-    "TPE-ORD only": ["TPE-ORD"],
-    "LAX-TPE only": ["LAX-TPE"],
-}
-
-FAMILY_OPTIONS = ["Standard", "Up"]
+from src.trip import Leg, Trip
+from src.upgrade_rules import classify_fare_class, load_chart, load_settings
 
 
-def _fmt_int(n) -> str:
-    if n is None:
-        return "n/a"
-    return f"{int(n):,}"
-
-
-def _confidence_color(level: str) -> str:
-    return {
-        "High": "green",
-        "Medium": "orange",
-        "Low": "gray",
-        "Do Not Buy": "red",
-    }.get(level, "gray")
+def _families():
+    return ["Standard", "Up"]
 
 
 def main():
-    st.set_page_config(
-        page_title="EVA Fare & Upgrade Decision",
-        page_icon="✈",
-        layout="wide",
-    )
-    st.title("EVA Air Fare & Upgrade Decision Assistant")
-    st.caption(
-        "Local tool. No ticket purchase. No login automation. "
-        "No credentials stored. ExpertFlyer data is manual and treated as a "
-        "third-party clue only."
-    )
-
+    st.set_page_config(page_title="EVA Upgrade Decision", page_icon="✈",
+                       layout="wide")
     chart = load_chart()
     try:
         settings = load_settings()
     except FileNotFoundError:
         settings = {}
 
-    # ---- Sidebar: inputs ----
-    st.sidebar.header("Inputs")
+    st.title("EVA Air — Upgrade Decision")
+    st.caption("Paste what you see in your own browser. No login, no scraping, "
+               "no credentials stored. ExpertFlyer = third-party clue only.")
 
-    pair_label = st.sidebar.selectbox(
-        "Route pair", list(ROUTE_PAIRS.keys()), index=0
-    )
-    routes = ROUTE_PAIRS[pair_label]
+    # ---------------- Sidebar: trip + money ----------------
+    sb = st.sidebar
+    sb.header("Trip")
+    trip_type = sb.radio("Type", ["Round-trip", "One-way", "Multi-city"])
+    passengers = sb.number_input("Passengers", 1, 9,
+                                 int(settings.get("default_passengers", 2)))
 
-    passengers = st.sidebar.number_input(
-        "Passengers", min_value=1, max_value=9,
-        value=int(settings.get("default_passengers", 2)), step=1,
-    )
+    legs = []
+    if trip_type == "One-way":
+        o = sb.text_input("From", "TPE").upper()
+        d = sb.text_input("To", "ORD").upper()
+        legs = [Leg(o, d)]
+        trip = Trip("one_way", legs, passengers)
+    elif trip_type == "Round-trip":
+        o = sb.text_input("From", "TPE").upper()
+        d = sb.text_input("To", "ORD").upper()
+        legs = [Leg(o, d), Leg(d, o)]
+        trip = Trip("round_trip", legs, passengers)
+    else:
+        n = sb.number_input("Number of legs", 2, 8, 2)
+        for i in range(int(n)):
+            c1, c2 = sb.columns(2)
+            o = c1.text_input(f"Leg {i+1} from", "TPE" if i == 0 else "",
+                              key=f"o{i}").upper()
+            d = c2.text_input(f"Leg {i+1} to", "ORD" if i == 0 else "",
+                              key=f"d{i}").upper()
+            if o and d:
+                legs.append(Leg(o, d))
+        trip = Trip("multi_city", legs, passengers)
 
-    currency_default = settings.get("default_currency", "TWD")
-    currency = st.sidebar.selectbox(
-        "Currency", ["TWD", "USD"],
-        index=0 if currency_default == "TWD" else 1,
-    )
+    sb.header("Money")
+    currency = sb.selectbox("Currency", ["TWD", "USD"], 0)
+    mv_default = settings.get("eva_mile_value", {}).get(
+        currency, 0.8 if currency == "TWD" else 0.025)
+    mile_value = sb.number_input(f"Your mile value ({currency}/mile)", 0.0,
+                                 value=float(mv_default), step=0.01,
+                                 format="%.4f")
 
-    mile_value_default = (
-        settings.get("eva_mile_value", {}).get(currency, 0.8 if currency == "TWD" else 0.025)
-    )
-    mile_value = st.sidebar.number_input(
-        f"Your EVA mile valuation ({currency} / mile)",
-        min_value=0.0, value=float(mile_value_default), step=0.01, format="%.4f",
-    )
+    # ---------------- Paste boxes ----------------
+    st.subheader("Paste your EVA quotes")
+    cE, cP = st.columns(2)
+    with cE:
+        eco_text = st.text_area("Economy quote (copied from EVA site)",
+                                height=140, key="eco_q")
+        pe_eco = parse_fare_quote(eco_text)
+        eco_family = st.selectbox(
+            "Economy family", _families(),
+            index=(1 if (pe_eco.fare_family or "").lower() == "up" else 0))
+        eco_price = st.number_input(
+            f"Economy total price ({currency})", 0.0,
+            value=float(pe_eco.price or 0.0), step=1000.0)
+        eco_fc = st.text_input("Economy fare class",
+                               value=pe_eco.fare_class or "")
+        for w in pe_eco.warnings:
+            st.caption(f"⚠ {w}")
+    with cP:
+        pe_text = st.text_area("Premium Economy quote (copied from EVA site)",
+                               height=140, key="pe_q")
+        pe_pe = parse_fare_quote(pe_text)
+        pe_family = st.selectbox(
+            "Premium Economy family", _families(),
+            index=(1 if (pe_pe.fare_family or "").lower() == "up" else 0))
+        pe_price = st.number_input(
+            f"Premium Economy total price ({currency})", 0.0,
+            value=float(pe_pe.price or 0.0), step=1000.0)
+        pe_fc = st.text_input("Premium Economy fare class",
+                              value=pe_pe.fare_class or "")
+        for w in pe_pe.warnings:
+            st.caption(f"⚠ {w}")
 
-    economy_family = st.sidebar.selectbox("Economy fare family", FAMILY_OPTIONS, index=0)
-    premium_family = st.sidebar.selectbox(
-        "Premium Economy fare family", FAMILY_OPTIONS, index=0
-    )
+    # ---------------- ExpertFlyer paste ----------------
+    st.subheader("Paste ExpertFlyer text (optional)")
+    ef_text = st.text_area("Copied ExpertFlyer flight / availability text",
+                           height=120, key="ef_q")
+    parsed_ef = parse_expertflyer(ef_text) if ef_text.strip() else None
+    official_confirmed = st.checkbox(
+        "I have OFFICIAL EVA upgrade confirmation (manual)")
+    official_waitlist = st.checkbox(
+        "EVA says upgrade is waitlistable (manual)")
 
-    st.sidebar.markdown("**Prices (booking total, all passengers, all legs)**")
-    economy_price = st.sidebar.number_input(
-        f"Economy {economy_family} price ({currency})",
-        min_value=0.0, value=110000.0, step=1000.0,
-    )
-    premium_economy_price = st.sidebar.number_input(
-        f"Premium Economy {premium_family} price ({currency})",
-        min_value=0.0, value=160000.0, step=1000.0,
-    )
+    ef_clue = None
+    if parsed_ef:
+        ef_clue = parsed_ef.suggested_clue
+        st.info(f"Parsed ExpertFlyer → flight {parsed_ef.flight_number}, "
+                f"aircraft {parsed_ef.aircraft}, suggested clue "
+                f"**{parsed_ef.suggested_clue}**. {parsed_ef.notes}")
+        for w in parsed_ef.warnings:
+            st.caption(f"⚠ {w}")
+        if st.button("Save this ExpertFlyer check"):
+            chk = ExpertFlyerCheck(
+                route=legs[-1].code() if legs else "",
+                date="", airline="BR",
+                flight_number=parsed_ef.flight_number or "",
+                aircraft=parsed_ef.aircraft or "",
+                scheduled_departure=parsed_ef.departure or "",
+                scheduled_arrival=parsed_ef.arrival or "",
+                fare_bucket_notes=", ".join(parsed_ef.business_buckets),
+                confidence_clue=parsed_ef.suggested_clue,
+                notes=parsed_ef.notes, source="ExpertFlyer")
+            p = expertflyer_input.save(chk)
+            st.success(f"Saved {p}")
 
-    st.sidebar.markdown("**Eligibility / confidence inputs**")
-    fare_class = st.sidebar.text_input(
-        "Premium Economy fare class to evaluate (e.g. L, T, K, P)", value="L"
-    ).strip().upper()
-    official_confirmed = st.sidebar.checkbox(
-        "Official EVA upgrade confirmed (manual)", value=False
-    )
-    official_waitlist = st.sidebar.checkbox(
-        "Official EVA waitlist confirmed (manual)", value=False
-    )
-    seatmap_only = st.sidebar.checkbox(
-        "Only seat map evidence available", value=False
-    )
-
-    # ---- Main: comparison ----
+    # ---------------- Compute ----------------
     inp = ComparisonInput(
-        routes=routes,
-        passengers=int(passengers),
-        economy_price=float(economy_price),
-        premium_economy_price=float(premium_economy_price),
-        currency=currency,
-        economy_family=economy_family,
-        premium_family=premium_family,
-        mile_value=float(mile_value),
-    )
+        trip=trip, economy_price=float(eco_price),
+        premium_economy_price=float(pe_price), currency=currency,
+        economy_family=eco_family, premium_family=pe_family,
+        mile_value=float(mile_value))
     result = compare(inp, chart=chart)
 
-    st.subheader("Recommendation")
-    rec_color = {
-        "Premium Economy": "green",
-        "Economy": "gray",
-    }.get(result.recommendation, "orange")
-    if "Do Not Buy" in result.recommendation:
-        rec_color = "red"
-    st.markdown(
-        f"### :{rec_color}[{result.recommendation}]"
-    )
+    # Verdict + 3 numbers headline
+    st.markdown("---")
+    color = "red" if "Cannot" in result.recommendation or \
+        "ECONOMY" in result.recommendation.upper() and "PREMIUM" not in \
+        result.recommendation.upper() else \
+        ("green" if "PREMIUM" in result.recommendation.upper() else "orange")
+    st.markdown(f"# :{color}[{result.recommendation}]")
     st.write(result.reasoning)
+    if not result.blocked:
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Cash upcharge",
+                  f"{result.cash_upcharge:,.0f} {currency}")
+        m2.metric("Miles saved (total)",
+                  f"{result.miles_saved_total:,}")
+        m3.metric("Cost / saved mile",
+                  "n/a" if result.implied_cost_per_saved_mile is None
+                  else f"{result.implied_cost_per_saved_mile:.3f} {currency}",
+                  delta=f"vs {mile_value} you value",
+                  delta_color="off")
+    st.markdown("---")
 
-    # Top metrics row
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Cash upcharge",
-              f"{result.cash_upcharge:,.0f} {currency}")
-    c2.metric("Miles saved (total)",
-              _fmt_int(result.miles_saved_total))
-    c3.metric("Implied cost / saved mile",
-              "n/a" if result.implied_cost_per_saved_mile is None
-              else f"{result.implied_cost_per_saved_mile:.4f} {currency}")
-    c4.metric("Your mile valuation",
-              f"{mile_value} {currency}")
+    # Eligibility check on the fare classes typed/parsed
+    cc1, cc2 = st.columns(2)
+    for col, label, fc_val in ((cc1, "Economy", eco_fc),
+                               (cc2, "Premium Economy", pe_fc)):
+        with col:
+            if fc_val.strip():
+                fc = classify_fare_class(chart, fc_val)
+                (st.success if fc.upgradeable else st.error)(
+                    f"{label} class {fc.fare_class}: {fc.reason}")
 
-    # ---- Mileage table ----
-    st.subheader("Upgrade Mileage")
+    # Confidence (use Premium Economy fare class as the upgrade target)
+    confidence = None
+    if pe_fc.strip():
+        fcinfo = classify_fare_class(chart, pe_fc)
+        confidence = assess(fcinfo, official_confirmed=official_confirmed,
+                            official_waitlist=official_waitlist,
+                            expertflyer_clue=ef_clue)
+        cmap = {"High": "green", "Medium": "orange", "Low": "gray",
+                "Do Not Buy": "red"}
+        st.markdown(f"**Upgrade confidence:** "
+                    f":{cmap.get(confidence.level,'gray')}[{confidence.level}]"
+                    f" — {confidence.reasoning}")
 
-    per_leg_rows = []
-    for r in routes:
-        per_leg_rows.append({
-            "Route": r,
-            f"Economy {economy_family} / pp":
-                miles_for_bucket(chart, r, "Economy", economy_family),
-            f"Premium Economy {premium_family} / pp":
-                miles_for_bucket(chart, r, "Premium Economy", premium_family),
-        })
-    st.table(per_leg_rows)
+    # Per-leg mileage table
+    if result.economy.legs:
+        rows = []
+        for e, p in zip(result.economy.legs, result.premium.legs):
+            rows.append({
+                "Leg": f"{e.origin}-{e.destination}",
+                "Region pair": f"{e.origin_region} ↔ {e.destination_region}"
+                if e.origin_region and e.destination_region else "unknown",
+                "Economy /pp": e.miles if e.status == "ok" else e.status,
+                "Premium /pp": p.miles if p.status == "ok" else p.status,
+            })
+        st.table(rows)
 
-    totals_rows = [
-        {
-            "Metric": "Per person total",
-            "Economy": _fmt_int(result.economy_miles_per_person),
-            "Premium Economy": _fmt_int(result.premium_miles_per_person),
-            "Saved": _fmt_int(result.miles_saved_per_person),
-        },
-        {
-            "Metric": f"All {result.passengers} passengers",
-            "Economy": _fmt_int(result.economy_miles_total),
-            "Premium Economy": _fmt_int(result.premium_miles_total),
-            "Saved": _fmt_int(result.miles_saved_total),
-        },
-    ]
-    st.table(totals_rows)
+    if result.blocked:
+        st.error("Unverified chart legs — confirm with EVA and add to "
+                 "config/eva_upgrade_chart.yaml:")
+        for n in result.block_notes:
+            st.write(f"- {n}")
 
-    # ---- Eligibility + Confidence ----
-    st.subheader("Fare Class Eligibility & Confidence")
-    elig_col, conf_col = st.columns(2)
-
-    eligibility = None
-    if fare_class:
-        eligibility = check_eligibility(chart, routes[0], fare_class)
-        with elig_col:
-            st.markdown(f"**Route:** `{eligibility.route}`")
-            st.markdown(f"**Fare class:** `{eligibility.fare_class}`")
-            if eligibility.upgradeable:
-                st.success(
-                    f"Upgradeable — {eligibility.cabin} {eligibility.fare_family} "
-                    f"→ Business for {eligibility.miles_to_business:,} miles/pp"
-                )
-            else:
-                st.error(eligibility.reason)
-
-    # Pull latest ExpertFlyer for confidence boost
-    ef_latest = expertflyer_input.latest_any()
-    ef_clue = ef_latest.confidence_clue if ef_latest else None
-
-    if eligibility is not None:
-        confidence = assess(
-            eligibility,
-            official_confirmed=official_confirmed,
-            official_waitlist=official_waitlist,
-            expertflyer_clue=ef_clue,
-            seatmap_only=seatmap_only,
-        )
-        with conf_col:
-            color = _confidence_color(confidence.level)
-            st.markdown(f"**Confidence level:** :{color}[{confidence.level}]")
-            st.markdown(
-                f"**Source officiality:** "
-                f"{'official EVA input' if confidence.is_official else 'NOT official EVA'}"
-            )
-            st.write(confidence.reasoning)
-    else:
-        confidence = None
-
-    # ---- ExpertFlyer manual entry ----
-    st.subheader("ExpertFlyer — Manual Entry")
-    st.caption(
-        "ExpertFlyer data is treated as a third-party clue only. It is NOT "
-        "official EVA upgrade confirmation. Seat map availability is not the "
-        "same as mileage upgrade availability."
-    )
-
-    with st.form("ef_form"):
-        ef_route = st.selectbox("Route", routes, index=len(routes) - 1)
-        ef_date = st.text_input("Date (YYYY-MM-DD)", value="2026-06-23")
-        ef_airline = st.text_input("Airline code", value="BR")
-        ef_flight = st.text_input("Flight number", value="BR15")
-        ef_aircraft = st.text_input("Aircraft", value="Boeing 777-300ER")
-        c_dep, c_arr = st.columns(2)
-        ef_departure = c_dep.text_input("Scheduled departure", value="00:50")
-        ef_arrival = c_arr.text_input("Scheduled arrival", value="05:20+1")
-
-        ef_business_notes = st.text_area("Business cabin seat-map notes", value="")
-        ef_premium_notes = st.text_area("Premium Economy seat-map notes", value="")
-        ef_economy_notes = st.text_area("Economy seat-map notes", value="")
-        ef_fare_bucket = st.text_area("Fare bucket / inventory notes", value="")
-        ef_seat_count = st.text_input("Seat count / observations", value="")
-
-        ef_biz_clue = st.text_input("Business availability clue (free text)", value="")
-        ef_pe_clue = st.text_input(
-            "Premium Economy availability clue (free text)", value=""
-        )
-
-        ef_clue_choice = st.selectbox(
-            "Overall confidence clue",
-            ["unknown", "strong", "weak", "none"], index=0,
-        )
-        ef_notes = st.text_area(
-            "Notes",
-            value="Seat map only. Not official EVA upgrade inventory.",
-        )
-        ef_screenshot = st.text_input("Screenshot path (optional)", value="")
-        submit = st.form_submit_button("Save ExpertFlyer check")
-
-    if submit:
-        check = ExpertFlyerCheck(
-            route=ef_route,
-            date=ef_date,
-            airline=ef_airline,
-            flight_number=ef_flight,
-            aircraft=ef_aircraft,
-            scheduled_departure=ef_departure,
-            scheduled_arrival=ef_arrival,
-            business_seatmap_notes=ef_business_notes,
-            premium_seatmap_notes=ef_premium_notes,
-            economy_seatmap_notes=ef_economy_notes,
-            seat_count_observations=ef_seat_count,
-            fare_bucket_notes=ef_fare_bucket,
-            business_availability_clue=ef_biz_clue,
-            premium_availability_clue=ef_pe_clue,
-            confidence_clue=ef_clue_choice,
-            notes=ef_notes,
-            screenshot_path=ef_screenshot,
-        )
-        path = expertflyer_input.save(check)
-        st.success(f"Saved to {path}")
-        st.warning(
-            "Reminder: ExpertFlyer is a third-party clue, not official EVA "
-            "upgrade confirmation."
-        )
-        ef_latest = check  # show it below right away
-
-    # ---- Latest ExpertFlyer summary ----
-    st.subheader("Latest ExpertFlyer Observations")
-    if ef_latest is None:
-        st.info("No ExpertFlyer checks recorded yet.")
-    else:
-        st.markdown(
-            f"- Checked at: `{ef_latest.checked_at}`\n"
-            f"- Route: `{ef_latest.route}`\n"
-            f"- Flight: `{ef_latest.airline}{ef_latest.flight_number}` "
-            f"on `{ef_latest.date}`\n"
-            f"- Aircraft: {ef_latest.aircraft or '_n/a_'}\n"
-            f"- Scheduled: {ef_latest.scheduled_departure} → "
-            f"{ef_latest.scheduled_arrival}\n"
-            f"- Confidence clue: **{ef_latest.confidence_clue}**"
-        )
-        if ef_latest.business_seatmap_notes:
-            st.markdown(f"- Business seat map: {ef_latest.business_seatmap_notes}")
-        if ef_latest.premium_seatmap_notes:
-            st.markdown(
-                f"- Premium Economy seat map: {ef_latest.premium_seatmap_notes}"
-            )
-        if ef_latest.fare_bucket_notes:
-            st.markdown(f"- Fare bucket notes: {ef_latest.fare_bucket_notes}")
-        if ef_latest.notes:
-            st.markdown(f"- Notes: {ef_latest.notes}")
-        st.caption(ef_latest.disclaimer)
-
-    # ---- Warnings ----
-    st.subheader("Warnings")
     st.warning(
-        "- Aircraft type and seat map can change before departure.\n"
-        "- Seat map availability is NOT the same as mileage upgrade availability.\n"
-        "- Paid Business inventory is NOT the same as mileage upgrade inventory.\n"
-        "- ExpertFlyer is third-party and does not confirm EVA upgrade space.\n"
-        "- Premium Economy Basic P is NOT upgradeable.\n"
-        "- Economy Discount/Basic A/V/W/S are NOT upgradeable."
-    )
+        "Aircraft & seat maps change. Seat-map ≠ upgrade availability. "
+        "Paid Business ≠ mileage upgrade inventory. ExpertFlyer never "
+        "confirms EVA upgrade space. P / A / V / W / S = not upgradeable.")
 
-    # ---- Report download ----
-    st.subheader("Export Report")
-    per_leg_breakdown = [
-        {
-            "route": r,
-            "economy_pp": miles_for_bucket(chart, r, "Economy", economy_family),
-            "premium_pp": miles_for_bucket(chart, r, "Premium Economy", premium_family),
-        }
-        for r in routes
-    ]
-    md = build_report(result, ef_check=ef_latest, confidence=confidence,
-                      per_leg_breakdown=per_leg_breakdown)
-    st.download_button(
-        "Download Markdown report",
-        data=md,
-        file_name="eva_upgrade_report.md",
-        mime="text/markdown",
-    )
+    md = build_report(result, ef_check=None, confidence=confidence)
+    st.download_button("Download Markdown report", md,
+                       file_name="eva_upgrade_report.md",
+                       mime="text/markdown")
     if st.button("Save report to reports/"):
-        path = save_report(md)
-        st.success(f"Report saved to {path}")
+        st.success(f"Saved {save_report(md)}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Runtime-generated artifacts
+data/checks/*.json
+data/fare_checks.csv
+data/expertflyer_checks.csv
+data/screenshots/
+reports/*.md

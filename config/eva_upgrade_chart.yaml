@@ -1,0 +1,80 @@
+# EVA Air Infinity MileageLands - Mileage Upgrade Award chart (region based)
+#
+# HONESTY NOTE
+# ------------
+# Only region pairs with `verified: true` carry mileage numbers I/you have
+# confirmed. Every other pair is intentionally absent. When a trip leg
+# resolves to an unverified/absent region pair, the tool reports
+# "chart value not verified - confirm with EVA" instead of guessing.
+#
+# To extend: add the airport to `airports`, add/confirm the region pair under
+# `upgrade_award`, set `verified: true`, and it works immediately.
+#
+# Mileage = miles per person to upgrade ONE leg to Business / Royal Laurel.
+
+# ---- Airport -> region ----
+airports:
+  # Taiwan
+  TPE: TW
+  KHH: TW
+  # North America - higher-mileage group
+  ORD: NA_HIGH
+  JFK: NA_HIGH
+  EWR: NA_HIGH
+  IAH: NA_HIGH
+  DFW: NA_HIGH
+  IAD: NA_HIGH
+  YYZ: NA_HIGH
+  # North America - lower-mileage group
+  LAX: NA_LOW
+  SFO: NA_LOW
+  SEA: NA_LOW
+  # Regions below are defined for future use but their award values are
+  # NOT verified, so no upgrade_award entry exists for them yet.
+  LHR: EUROPE
+  CDG: EUROPE
+  VIE: EUROPE
+  AMS: EUROPE
+  MUC: EUROPE
+  BKK: SEA
+  SIN: SEA
+  HKG: NE_ASIA
+  NRT: NE_ASIA
+  HND: NE_ASIA
+  ICN: NE_ASIA
+  BNE: OCEANIA
+  SYD: OCEANIA
+
+regions:
+  TW: "Taiwan"
+  NA_HIGH: "Chicago / New York / Houston / Dallas / Washington / Toronto"
+  NA_LOW: "Los Angeles / San Francisco / Seattle"
+  EUROPE: "Europe"
+  SEA: "Southeast Asia"
+  NE_ASIA: "Northeast Asia"
+  OCEANIA: "Oceania"
+
+# ---- Global fare-class -> cabin/family mapping ----
+fare_classes:
+  economy:
+    standard: ["Q", "H", "M"]
+    up: ["B", "Y"]
+  premium_economy:
+    standard: ["L", "T"]
+    up: ["K"]
+  non_upgradeable: ["A", "V", "W", "S", "P"]
+
+# ---- Region-pair upgrade award (order-independent key "A|B", A<B) ----
+upgrade_award:
+  "NA_HIGH|TW":
+    verified: true
+    economy_standard: 70000
+    economy_up: 58500
+    premium_economy_standard: 40000
+    premium_economy_up: 36000
+  "NA_LOW|TW":
+    verified: true
+    economy_standard: 60000
+    economy_up: 50000
+    premium_economy_standard: 35000
+    premium_economy_up: 31500
